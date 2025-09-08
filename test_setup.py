@@ -18,8 +18,10 @@ async def test_database_connection():
     print("Testing database connection...")
     try:
         from database import AsyncSessionLocal
+        from sqlalchemy import text
+
         async with AsyncSessionLocal() as session:
-            result = await session.execute("SELECT 1 as test")
+            result = await session.execute(text("SELECT 1 as test"))
             row = result.fetchone()
             if row and row[0] == 1:
                 print("✅ Database connection successful")

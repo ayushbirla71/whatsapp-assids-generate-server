@@ -10,7 +10,7 @@ A Python-based server for automatically generating personalized assets (images, 
 - **Status Tracking**: Comprehensive status management for campaigns and audience members
 - **RESTful API**: Monitor and manage asset generation processes
 - **Comprehensive Logging**: Structured logging with JSON format support
-- **Docker Support**: Easy deployment with Docker and Docker Compose
+- **AWS Elastic Beanstalk Ready**: Optimized for AWS EB deployment with auto-scaling
 - **Fault Tolerance**: Automatic recovery from server crashes and stuck processes
 - **Retry Mechanism**: Intelligent retry logic for failed asset generations
 - **Real-time Monitoring**: System health monitoring and performance metrics
@@ -39,7 +39,7 @@ A Python-based server for automatically generating personalized assets (images, 
 - Python 3.11+
 - PostgreSQL database (with existing WhatsApp server schema)
 - AWS S3 bucket and credentials
-- Docker (optional)
+- For production: AWS Elastic Beanstalk CLI (`pip install awsebcli`)
 
 ### Local Setup
 
@@ -75,18 +75,42 @@ A Python-based server for automatically generating personalized assets (images, 
    python main.py
    ```
 
-### Docker Setup
+### AWS Elastic Beanstalk Deployment (Production)
 
-1. **Configure environment**
+1. **Prepare Application**
 
    ```bash
+   git clone <repository-url>
+   cd whatsapp-assids-generate-server
    cp .env.example .env
-   # Edit .env with your configuration
+   # Edit .env with your AWS RDS and S3 configuration
    ```
 
-2. **Start with Docker Compose**
+2. **Initialize and Deploy**
+
    ```bash
-   docker-compose up -d
+   # Install EB CLI
+   pip install awsebcli
+
+   # Initialize EB application
+   eb init whatsapp-asset-server --platform python-3.11 --region us-east-1
+
+   # Create environment
+   eb create production --instance-type t3.medium --min-instances 1 --max-instances 5
+
+   # Set environment variables
+   eb setenv DATABASE_URL="postgresql://user:pass@your-rds-endpoint:5432/whatsapp_server"
+   eb setenv AWS_ACCESS_KEY_ID="your-access-key"
+   eb setenv AWS_SECRET_ACCESS_KEY="your-secret-key"
+   eb setenv S3_BUCKET_NAME="your-bucket-name"
+
+   # Deploy
+   eb deploy
+   ```
+
+3. **Apply Database Migration**
+   ```bash
+   psql -h your-rds-endpoint -U your-user -d whatsapp_server -f migrations/add_asset_generation_tables.sql
    ```
 
 ## Configuration
@@ -105,6 +129,31 @@ A Python-based server for automatically generating personalized assets (images, 
 | `CRON_ENABLED`               | Enable cron scheduler            | `True`          |
 | `ASSET_TEMP_DIR`             | Temporary directory for assets   | `./temp_assets` |
 | `MAX_CONCURRENT_GENERATIONS` | Max concurrent asset generations | `5`             |
+
+### AWS Elastic Beanstalk Configuration
+
+The application includes pre-configured EB settings:
+
+- **Platform**: Python 3.11
+- **Instance Type**: t3.medium (recommended minimum)
+- **Auto Scaling**: 1-5 instances
+- **Health Checks**: Enhanced monitoring enabled
+- **Log Collection**: Application logs automatically collected
+
+#### Required EB Environment Variables
+
+Set these using `eb setenv`:
+
+```bash
+eb setenv DATABASE_URL="postgresql://user:pass@your-rds-endpoint:5432/whatsapp_server"
+eb setenv AWS_ACCESS_KEY_ID="your-access-key"
+eb setenv AWS_SECRET_ACCESS_KEY="your-secret-key"
+eb setenv S3_BUCKET_NAME="your-bucket-name"
+eb setenv DEBUG="False"
+eb setenv LOG_LEVEL="INFO"
+eb setenv CRON_ENABLED="True"
+eb setenv MAX_CONCURRENT_GENERATIONS="10"
+```
 
 ## Database Schema
 
@@ -281,6 +330,34 @@ curl http://localhost:8000/api/v1/recovery/statistics
 - S3 upload statistics
 - Database connection health
 
+### AWS Elastic Beanstalk Monitoring
+
+When deployed on EB, additional monitoring is available:
+
+- **EB Health Dashboard**: Monitor application health and performance
+- **CloudWatch Logs**: Centralized log collection and analysis
+- **CloudWatch Metrics**: CPU, memory, and request metrics
+- **Auto Scaling**: Automatic scaling based on load
+
+#### EB Management Commands
+
+```bash
+# Check application status
+eb status
+
+# View application health
+eb health
+
+# View logs
+eb logs
+
+# SSH into instance (if needed)
+eb ssh
+
+# Monitor in real-time
+eb health --refresh
+```
+
 ## Troubleshooting
 
 ### Common Issues
@@ -301,6 +378,54 @@ curl http://localhost:8000/api/v1/recovery/statistics
    - Check database URL and credentials
    - Verify database server is running
    - Check network connectivity
+
+### AWS Elastic Beanstalk Specific Issues
+
+1. **Deployment fails**
+
+   ```bash
+   # Check deployment logs
+   eb logs
+
+   # Verify platform version
+   eb platform show
+
+   # Check configuration
+   eb config
+   ```
+
+2. **Environment variables not set**
+
+   ```bash
+   # List current environment variables
+   eb printenv
+
+   # Set missing variables
+   eb setenv KEY=VALUE
+   ```
+
+3. **Application not starting**
+
+   ```bash
+   # Check application logs
+   eb logs --all
+
+   # SSH into instance for debugging
+   eb ssh
+
+   # Check process status
+   sudo supervisorctl status
+   ```
+
+4. **Auto-scaling issues**
+
+   ```bash
+   # Check auto-scaling configuration
+   eb config
+
+   # Monitor scaling events
+   eb health --refresh
+   ```
 
 ### Debug Mode
 
@@ -343,5 +468,6 @@ pytest
 ## License
 
 [Your License Here]
-#   w h a t s a p p - a s s i d s - g e n e r a t e - s e r v e r  
+#   w h a t s a p p - a s s i d s - g e n e r a t e - s e r v e r 
+ 
  
