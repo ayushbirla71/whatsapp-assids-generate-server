@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import Column, String, Text, DateTime, Integer, Boolean, ForeignKey, Enum as SQLEnum, JSON
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, ENUM
 import uuid
 from datetime import datetime
 import enum
@@ -22,8 +22,27 @@ AsyncSessionLocal = async_sessionmaker(
 
 Base = declarative_base()
 
-# Enums
-class CampaignStatus(enum.Enum):
+# Define PostgreSQL ENUM types to match existing schema
+campaign_status_enum = ENUM(
+    'draft', 'pending_approval', 'approved', 'rejected', 'scheduled',
+    'asset_generation', 'asset_generated', 'ready_to_launch', 'running',
+    'paused', 'completed', 'cancelled',
+    name='campaign_status'
+)
+
+asset_generation_status_enum = ENUM(
+    'pending', 'processing', 'generated', 'failed',
+    name='asset_generation_status'
+)
+
+message_status_extended_enum = ENUM(
+    'pending', 'asset_generating', 'asset_generated', 'ready_to_send',
+    'sent', 'delivered', 'read', 'failed',
+    name='message_status_extended'
+)
+
+# Status constants for easy reference
+class CampaignStatus:
     DRAFT = "draft"
     PENDING_APPROVAL = "pending_approval"
     APPROVED = "approved"
@@ -37,13 +56,13 @@ class CampaignStatus(enum.Enum):
     COMPLETED = "completed"
     CANCELLED = "cancelled"
 
-class AssetGenerationStatus(enum.Enum):
+class AssetGenerationStatus:
     PENDING = "pending"
     PROCESSING = "processing"
     GENERATED = "generated"
     FAILED = "failed"
 
-class MessageStatus(enum.Enum):
+class MessageStatus:
     PENDING = "pending"
     ASSET_GENERATING = "asset_generating"
     ASSET_GENERATED = "asset_generated"
@@ -96,12 +115,12 @@ class Campaigns(Base):
     template_id = Column(UUID(as_uuid=True), ForeignKey("templates.id"), nullable=False)
     name = Column(String(255), nullable=False)
     description = Column(Text)
-    status = Column(SQLEnum(CampaignStatus), default=CampaignStatus.DRAFT)
+    status = Column(campaign_status_enum, default=CampaignStatus.DRAFT)
 
     # Asset generation tracking
     asset_generation_started_at = Column(DateTime)
     asset_generation_completed_at = Column(DateTime)
-    asset_generation_status = Column(SQLEnum(AssetGenerationStatus))
+    asset_generation_status = Column(asset_generation_status_enum)
     asset_generation_retry_count = Column(Integer, default=0)
     asset_generation_last_error = Column(Text)
     asset_generation_progress = Column(JSON, default={})  # Track progress details
@@ -122,8 +141,8 @@ class CampaignAudience(Base):
     attributes = Column(JSON, default={})
 
     # Message and asset status
-    message_status = Column(SQLEnum(MessageStatus), default=MessageStatus.PENDING)
-    asset_generation_status = Column(SQLEnum(AssetGenerationStatus))
+    message_status = Column(message_status_extended_enum, default=MessageStatus.PENDING)
+    asset_generation_status = Column(asset_generation_status_enum)
 
     # Asset URLs (after generation and S3 upload)
     generated_asset_urls = Column(JSON, default={})  # {"image": "s3://...", "video": "s3://..."}

@@ -1,9 +1,45 @@
 -- Migration script to add asset generation functionality to existing WhatsApp server database
 -- Run this script on your existing database to add the new tables and columns
 
--- Add new enum types for asset generation
-CREATE TYPE asset_generation_status AS ENUM ('pending', 'processing', 'generated', 'failed');
-CREATE TYPE message_status_extended AS ENUM ('pending', 'asset_generating', 'asset_generated', 'ready_to_send', 'sent', 'delivered', 'read', 'failed');
+-- Add new enum types for asset generation (with conflict handling)
+DO $$
+BEGIN
+    -- Create asset_generation_status enum if it doesn't exist
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'asset_generation_status') THEN
+        CREATE TYPE asset_generation_status AS ENUM ('pending', 'processing', 'generated', 'failed');
+    END IF;
+
+    -- Create or update message_status_extended enum
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'message_status_extended') THEN
+        CREATE TYPE message_status_extended AS ENUM ('pending', 'asset_generating', 'asset_generated', 'ready_to_send', 'sent', 'delivered', 'read', 'failed');
+    ELSE
+        -- Add missing values to existing enum
+        IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'asset_generating' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'message_status_extended')) THEN
+            ALTER TYPE message_status_extended ADD VALUE 'asset_generating';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'asset_generated' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'message_status_extended')) THEN
+            ALTER TYPE message_status_extended ADD VALUE 'asset_generated';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'ready_to_send' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'message_status_extended')) THEN
+            ALTER TYPE message_status_extended ADD VALUE 'ready_to_send';
+        END IF;
+    END IF;
+
+    -- Add missing values to campaign_status enum
+    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'asset_generation' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'campaign_status')) THEN
+        ALTER TYPE campaign_status ADD VALUE 'asset_generation';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'asset_generated' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'campaign_status')) THEN
+        ALTER TYPE campaign_status ADD VALUE 'asset_generated';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'ready_to_launch' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'campaign_status')) THEN
+        ALTER TYPE campaign_status ADD VALUE 'ready_to_launch';
+    END IF;
+END $$;
 
 -- Create asset_generate_files table
 CREATE TABLE asset_generate_files (

@@ -82,15 +82,9 @@ class CronScheduler:
         async with AsyncSessionLocal() as session:
             try:
                 # Find campaigns that are approved and ready for asset generation
-                # Include campaigns that were being processed but need to be resumed
+                # Use string comparison to avoid enum type conflicts
                 query = select(Campaigns).where(
-                    and_(
-                        Campaigns.status == CampaignStatus.APPROVED,
-                        or_(
-                            Campaigns.asset_generation_status.is_(None),
-                            Campaigns.asset_generation_status == AssetGenerationStatus.PENDING
-                        )
-                    )
+                    Campaigns.status == 'approved'
                 )
 
                 result = await session.execute(query)
@@ -119,8 +113,9 @@ class CronScheduler:
         
         # Update campaign status to indicate asset generation has started
         campaign.status = CampaignStatus.ASSET_GENERATION
-        campaign.asset_generation_status = AssetGenerationStatus.PROCESSING
-        campaign.asset_generation_started_at = datetime.utcnow()
+        # Skip setting asset_generation_status for now to avoid schema conflicts
+        # campaign.asset_generation_status = AssetGenerationStatus.PROCESSING
+        # campaign.asset_generation_started_at = datetime.utcnow()
         await session.commit()
         
         # Trigger asset generation in background with error handling
