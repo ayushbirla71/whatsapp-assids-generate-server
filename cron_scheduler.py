@@ -114,8 +114,8 @@ class CronScheduler:
         # Update campaign status to indicate asset generation has started
         campaign.status = CampaignStatus.ASSET_GENERATION
         # Skip setting asset_generation_status for now to avoid schema conflicts
-        # campaign.asset_generation_status = AssetGenerationStatus.PROCESSING
-        # campaign.asset_generation_started_at = datetime.utcnow()
+        campaign.asset_generation_status = AssetGenerationStatus.PROCESSING
+        campaign.asset_generation_started_at = datetime.utcnow()
         await session.commit()
         
         # Trigger asset generation in background with error handling

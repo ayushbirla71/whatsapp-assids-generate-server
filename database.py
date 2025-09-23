@@ -83,6 +83,7 @@ class AssetGenerateFiles(Base):
     description = Column(Text)
     version = Column(String(50), default="1.0")
     is_active = Column(Boolean, default=True)
+    typeofcontent = Column(String(255), nullable=False)
     
     # Metadata
     created_at = Column(DateTime, default=datetime.utcnow)

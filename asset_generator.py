@@ -1,3 +1,4 @@
+
 import asyncio
 import logging
 import os
@@ -76,6 +77,7 @@ class AssetGenerationManager:
                 await self._mark_campaign_failed(session, campaign, "No asset generation file found")
                 return
 
+            logger.info(f"Asset generation file found: {asset_file}")
             # Get audience members that need processing (including failed ones that can be retried)
             audience_members = await self._get_pending_campaign_audience(session, campaign_id)
             if not audience_members:
@@ -106,7 +108,7 @@ class AssetGenerationManager:
                 # Process batch with individual error handling
                 results = await asyncio.gather(*[
                     self._safe_generate_asset_for_audience_member(
-                        session, campaign, asset_file, member
+                        campaign, asset_file, member
                     )
                     for member in batch
                 ], return_exceptions=True)
@@ -166,7 +168,6 @@ class AssetGenerationManager:
 
     async def _safe_generate_asset_for_audience_member(
         self,
-        session: AsyncSession,
         campaign: Campaigns,
         asset_file: AssetGenerateFiles,
         audience_member: CampaignAudience
@@ -174,24 +175,32 @@ class AssetGenerationManager:
         """Safely generate asset for audience member with error handling"""
         try:
             return await self._generate_asset_for_audience_member(
-                session, campaign, asset_file, audience_member
+                campaign, asset_file, audience_member
             )
         except Exception as e:
             logger.error(f"Error generating asset for audience member {audience_member.id}: {e}", exc_info=True)
 
-            # Update audience member with error
-            audience_member.asset_generation_status = AssetGenerationStatus.FAILED
-            audience_member.asset_generation_last_error = str(e)
-            audience_member.asset_generation_retry_count += 1
-            audience_member.asset_generation_completed_at = datetime.utcnow()
-            audience_member.message_status = MessageStatus.FAILED
-            await session.commit()
+            # Use a separate session for error handling to avoid transaction conflicts
+            async with AsyncSessionLocal() as error_session:
+                try:
+                    # Get fresh instance of audience member in the error session
+                    fresh_audience_member = await error_session.get(CampaignAudience, audience_member.id)
+                    if fresh_audience_member:
+                        # Update audience member with error
+                        fresh_audience_member.asset_generation_status = AssetGenerationStatus.FAILED
+                        fresh_audience_member.asset_generation_last_error = str(e)
+                        fresh_audience_member.asset_generation_retry_count += 1
+                        fresh_audience_member.asset_generation_completed_at = datetime.utcnow()
+                        fresh_audience_member.message_status = MessageStatus.FAILED
+                        await error_session.commit()
+                except Exception as commit_error:
+                    logger.error(f"Failed to update error status for audience member {audience_member.id}: {commit_error}")
+                    await error_session.rollback()
 
             return False
 
     async def _generate_asset_for_audience_member(
         self,
-        session: AsyncSession,
         campaign: Campaigns,
         asset_file: AssetGenerateFiles,
         audience_member: CampaignAudience
@@ -199,61 +208,73 @@ class AssetGenerationManager:
         """Generate asset for a single audience member"""
         logger.set_context(audience_id=str(audience_member.id))
 
-        try:
-            logger.info(f"Generating asset for audience member {audience_member.name}")
+        # Use a dedicated session for this audience member to avoid transaction conflicts
+        async with AsyncSessionLocal() as session:
+            try:
+                logger.info(f"Generating asset for audience member {audience_member.name}")
 
-            # Update audience member status
-            audience_member.message_status = MessageStatus.ASSET_GENERATING
-            audience_member.asset_generation_status = AssetGenerationStatus.PROCESSING
-            audience_member.asset_generation_started_at = datetime.utcnow()
-            await session.commit()
+                # Get fresh instance of audience member in this session
+                audience_member = await session.get(CampaignAudience, audience_member.id)
+                if not audience_member:
+                    logger.error(f"Audience member not found: {audience_member.id}")
+                    return False
 
-            # Execute the asset generation code
-            generated_assets = await self._execute_asset_generation_code(
-                asset_file, audience_member.attributes, audience_member
-            )
+                # Update audience member status
+                audience_member.message_status = MessageStatus.ASSET_GENERATING
+                audience_member.asset_generation_status = AssetGenerationStatus.PROCESSING
+                audience_member.asset_generation_started_at = datetime.utcnow()
+                await session.commit()
 
-            if generated_assets:
-                # Upload assets to S3
-                uploaded_urls = await self._upload_assets_to_s3(generated_assets, campaign.id, audience_member.id)
+                # Execute the asset generation code
+                generated_assets = await self._execute_asset_generation_code(
+                    asset_file, audience_member.attributes, audience_member
+                )
 
-                if uploaded_urls:
-                    # Update audience member with asset URLs
-                    audience_member.generated_asset_urls = uploaded_urls
-                    audience_member.message_status = MessageStatus.ASSET_GENERATED
-                    audience_member.asset_generation_status = AssetGenerationStatus.GENERATED
-                    audience_member.asset_generation_completed_at = datetime.utcnow()
+                if generated_assets:
+                    # Upload assets to S3
+                    uploaded_urls = await self._upload_assets_to_s3(generated_assets, campaign.id, audience_member.id, asset_file.typeofcontent )
 
-                    logger.info(f"Asset generation completed for audience member {audience_member.name}")
-                    await session.commit()
-                    return True
+                    if uploaded_urls:
+                        # Update audience member with asset URLs
+                        audience_member.generated_asset_urls = uploaded_urls
+                        audience_member.message_status = MessageStatus.ASSET_GENERATED
+                        audience_member.asset_generation_status = AssetGenerationStatus.GENERATED
+                        audience_member.asset_generation_completed_at = datetime.utcnow()
+
+                        logger.info(f"Asset generation completed for audience member {audience_member.name}")
+                        await session.commit()
+                        return True
+                    else:
+                        # S3 upload failed
+                        audience_member.asset_generation_status = AssetGenerationStatus.FAILED
+                        audience_member.asset_generation_last_error = "S3 upload failed"
+                        audience_member.asset_generation_completed_at = datetime.utcnow()
+                        logger.error(f"S3 upload failed for audience member {audience_member.id}")
                 else:
-                    # S3 upload failed
+                    # Asset generation failed
                     audience_member.asset_generation_status = AssetGenerationStatus.FAILED
-                    audience_member.asset_generation_last_error = "S3 upload failed"
+                    audience_member.asset_generation_last_error = "Asset generation returned no results"
                     audience_member.asset_generation_completed_at = datetime.utcnow()
-                    logger.error(f"S3 upload failed for audience member {audience_member.id}")
-            else:
-                # Asset generation failed
-                audience_member.asset_generation_status = AssetGenerationStatus.FAILED
-                audience_member.asset_generation_last_error = "Asset generation returned no results"
-                audience_member.asset_generation_completed_at = datetime.utcnow()
-                logger.error(f"Asset generation failed for audience member {audience_member.id}")
+                    logger.error(f"Asset generation failed for audience member {audience_member.id}")
 
-            await session.commit()
-            return False
+                await session.commit()
+                return False
 
-        except Exception as e:
-            logger.error(f"Error generating asset for audience member {audience_member.id}: {e}", exc_info=True)
-            audience_member.asset_generation_status = AssetGenerationStatus.FAILED
-            audience_member.asset_generation_last_error = str(e)
-            audience_member.asset_generation_completed_at = datetime.utcnow()
-            await session.commit()
-            return False
-        finally:
-            logger.clear_context()
+            except Exception as e:
+                logger.error(f"Error generating asset for audience member {audience_member.id}: {e}", exc_info=True)
+                try:
+                    audience_member.asset_generation_status = AssetGenerationStatus.FAILED
+                    audience_member.asset_generation_last_error = str(e)
+                    audience_member.asset_generation_completed_at = datetime.utcnow()
+                    await session.commit()
+                except Exception as commit_error:
+                    logger.error(f"Failed to commit error status: {commit_error}")
+                    await session.rollback()
+                return False
+            finally:
+                logger.clear_context()
 
-    async def _execute_asset_generation_code(
+    async def  _execute_asset_generation_code(
         self, 
         asset_file: AssetGenerateFiles, 
         attributes: Dict[str, Any],
@@ -307,24 +328,31 @@ class AssetGenerationManager:
         self, 
         assets: Dict[str, str], 
         campaign_id: uuid.UUID, 
-        audience_id: uuid.UUID
+        audience_id: uuid.UUID,
+        typeofcontent: str
     ) -> Dict[str, str]:
         """Upload generated assets to S3 and return URLs"""
         uploaded_urls = {}
+        logger.info(f"Uploading assets to S3 for audience member {audience_id}")
+        logger.info(f"Type of content: {typeofcontent}")
         
         for asset_type, file_path in assets.items():
             try:
-                if os.path.exists(file_path):
+                 if typeofcontent == "public":
+                    uploaded_urls[asset_type] = file_path
+                    logger.info(f"Uploaded {asset_type} asset to S3: {file_path}")
+                    
+                 elif os.path.exists(file_path):
                     # Generate S3 key
                     file_extension = os.path.splitext(file_path)[1]
                     s3_key = f"campaigns/{campaign_id}/audience/{audience_id}/{asset_type}{file_extension}"
-                    
+
                     # Upload to S3
                     s3_url = await self.s3_uploader.upload_file(file_path, s3_key)
                     uploaded_urls[asset_type] = s3_url
-                    
+
                     logger.info(f"Uploaded {asset_type} asset to S3: {s3_url}")
-                else:
+                 else:
                     logger.warning(f"Asset file not found: {file_path}")
                     
             except Exception as e:
@@ -414,3 +442,4 @@ class AssetGenerationManager:
         campaign.asset_generation_progress = progress
 
         await session.commit()
+
