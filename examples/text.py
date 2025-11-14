@@ -32,7 +32,7 @@ def generate_asset(
         
         data_path = generate_data_file(attributes, name, msisdn, temp_dir)
         if data_path:
-            generated_assets["video"] = data_path
+            generated_assets["image"] = data_path
         
 
         return generated_assets
@@ -45,7 +45,7 @@ def generate_asset(
 def generate_data_file(attributes: Dict[str, Any], name: str, msisdn: str, temp_dir: str) -> Optional[str]:
     """Generate a JSON data file with all personalization data"""
     try:
-        return "https://waterbilles.s3.ap-south-1.amazonaws.com/output.mp4"
+        return "https://waterbilles.s3.ap-south-1.amazonaws.com/Vascular+Clinic.jpg"
     except Exception as e:
         print(f"Error generating data file: {e}")
         return None
